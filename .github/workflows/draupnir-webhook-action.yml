@@ -1,0 +1,636 @@
+# =============================================================================
+# Draupnir — e2e Actions → /github/webhook-action/*
+# =============================================================================
+#
+# Spec: docs/specs/github-webhook-action/workflow-template.md
+#
+# Copy to: .github/workflows/draupnir-webhook-action.yml
+#
+# WHY THIS WORKFLOW EXISTS
+#   E2E repos never use the GitHub App webhook. This Actions job clones locally,
+#   encrypts file blobs with a TKAI REK, and posts ciphertext to Draupnir.
+#   Draupnir stores encrypted snapshots only — it never clones these repos.
+#
+# REQUIRED SECRETS
+#   DRAUPNIR_BASE_URL  — Draupnir API origin (e.g. https://api.example.com)
+#   DRAUPNIR_API_KEY   — Org API key (dpn_…) for /github/webhook-action/*
+#   SA_PRIVATE_KEY     — TKAI service-account seed: tkai_sa_sk_<base64url>
+#                        Signs EdDSA JWTs and opens wrappedKeyBlob (mock layout)
+#
+# handle + secretId come from GET …/repo/status (stored on the repository row).
+#
+# ROUTES USED
+#   GET  …/github/webhook-action/repo/status   — is this an e2e pending repo?
+#   POST …/github/webhook-action/repo          — default-branch encrypted tree
+#   POST …/github/webhook-action/pull-request  — PR changed-file encrypted tree
+#   POST …/github/webhook-action/comment       — comment/review event JSON only
+#   POST …/v1/tkai                             — machine reveal forwarder
+#                                                → GET TKAI /machine/secrets/:id/reveal
+#
+# HIGH-LEVEL FLOW
+#   1. Checkout PR head (when needed for file content)
+#   2. Validate secrets + write URLs
+#   3. GET repo/status — skip if not e2e
+#   4. If pending (or PR merged into default) → encrypt default tree → POST /repo
+#   5. If comment/review event → POST /comment (no file crypto)
+#   6. If pull_request → encrypt changed files → POST /pull-request
+#   7. Wipe private key / REK from the runner disk
+# =============================================================================
+
+name: Draupnir webhook-action
+
+# -----------------------------------------------------------------------------
+# TRIGGERS
+# Fire on PR code events, PR conversation events, and manual dispatch.
+# -----------------------------------------------------------------------------
+on:
+  # PR lifecycle — may upload default tree and/or PR changed files
+  pull_request:
+    types: [opened, reopened, synchronize, closed, edited]
+  # Issue comments that belong to a PR (filtered in job `if` below)
+  issue_comment:
+    types: [created, edited, deleted]
+  # Review submission / edit / dismiss → comment route (metadata only)
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  # Inline review comments on a PR diff → comment route
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+  # Manual run is a no-op (no GitHub webhook payload to forward)
+  workflow_dispatch:
+
+# One concurrent run per repo + event + PR/issue; do not cancel in-flight uploads
+concurrency:
+  group: draupnir-webhook-action-${{ github.repository }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+# Least privilege: read code + PR metadata; never write to the repo
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  forward:
+    name: Forward to Draupnir
+    runs-on: ubuntu-latest
+    # Skip plain issue comments (issues that are not pull requests)
+    if: >-
+      github.event_name != 'issue_comment'
+      || github.event.issue.pull_request != null
+    steps:
+      # -----------------------------------------------------------------------
+      # STEP 1 — Checkout
+      # Need full git history so we can:
+      #   - list the default-branch tree (`git ls-tree`)
+      #   - diff base…head for PR changed files
+      #   - `git show` file contents at a specific SHA
+      # Skip checkout for events that only forward JSON (none today that need
+      # files without PR context); keep it for PR / review / PR-comment paths.
+      # -----------------------------------------------------------------------
+      - name: Checkout
+        if: >-
+          github.event_name == 'pull_request'
+          || github.event_name == 'pull_request_review'
+          || github.event_name == 'pull_request_review_comment'
+          || (github.event_name == 'issue_comment' && github.event.issue.pull_request != null)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Prefer PR head SHA so file reads match the PR tip
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      # -----------------------------------------------------------------------
+      # STEP 2 — Sync with Draupnir (main script)
+      # Shell sets env + validates secrets; Node does status, crypto, uploads.
+      # -----------------------------------------------------------------------
+      - name: Sync with Draupnir
+        env:
+          DRAUPNIR_BASE_URL: ${{ secrets.DRAUPNIR_BASE_URL }}
+          DRAUPNIR_API_KEY: ${{ secrets.DRAUPNIR_API_KEY }}
+          SA_PRIVATE_KEY: ${{ secrets.SA_PRIVATE_KEY }}
+          EVENT_NAME: ${{ github.event_name }}
+          # Unique-ish delivery id for Draupnir / TKAI correlation
+          DELIVERY_ID: ${{ github.run_id }}-${{ github.run_attempt }}-${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || '' }}
+          PR_ACTION: ${{ github.event.action || '' }}
+          PR_MERGED: ${{ github.event.pull_request.merged || false }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || '' }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # -------------------------------------------------------------------
+          # STEP 2a — Fail fast if any required secret is missing
+          # -------------------------------------------------------------------
+          for required in DRAUPNIR_BASE_URL DRAUPNIR_API_KEY SA_PRIVATE_KEY; do
+            if [ -z "${!required:-}" ]; then
+              echo "::error::Set secret ${required}"
+              exit 1
+            fi
+          done
+
+          # -------------------------------------------------------------------
+          # STEP 2b — Build absolute Draupnir / TKAI URLs from the base origin
+          # -------------------------------------------------------------------
+          DRAUPNIR_BASE_URL="${DRAUPNIR_BASE_URL%/}"
+          export DRAUPNIR_TKAI_URL="${DRAUPNIR_BASE_URL}/v1/tkai"
+          export STATUS_URL="${DRAUPNIR_BASE_URL}/github/webhook-action/repo/status"
+          export REPO_URL="${DRAUPNIR_BASE_URL}/github/webhook-action/repo"
+          export PR_URL="${DRAUPNIR_BASE_URL}/github/webhook-action/pull-request"
+          export COMMENT_URL="${DRAUPNIR_BASE_URL}/github/webhook-action/comment"
+
+          # -------------------------------------------------------------------
+          # STEP 2c — GitHub always writes the event JSON to GITHUB_EVENT_PATH
+          # -------------------------------------------------------------------
+          if [ -z "${GITHUB_EVENT_PATH:-}" ] || [ ! -f "$GITHUB_EVENT_PATH" ]; then
+            echo "::error::GITHUB_EVENT_PATH missing"
+            exit 1
+          fi
+          export EVENT_PATH="$GITHUB_EVENT_PATH"
+
+          # -------------------------------------------------------------------
+          # STEP 2d — Manual dispatch has no webhook payload → exit cleanly
+          # -------------------------------------------------------------------
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "workflow_dispatch has no webhook payload; open or update a PR instead."
+            exit 0
+          fi
+
+          # -------------------------------------------------------------------
+          # STEP 2e — Validate SA seed shape (tkai_sa_sk_<base64url>)
+          # -------------------------------------------------------------------
+          case "$SA_PRIVATE_KEY" in
+            tkai_sa_sk_*) ;;
+            *)
+              echo "::error::SA_PRIVATE_KEY must start with tkai_sa_sk_"
+              exit 1
+              ;;
+          esac
+
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const crypto = require('crypto');
+          const { execFileSync } = require('child_process');
+          const { randomUUID } = require('crypto');
+
+          // -----------------------------------------------------------------
+          // STEP 3 — Read env into locals (passed from the shell step above)
+          // -----------------------------------------------------------------
+          const apiKey = process.env.DRAUPNIR_API_KEY;
+          const saPrivateKey = process.env.SA_PRIVATE_KEY;
+          const eventName = process.env.EVENT_NAME;
+          const eventPath = process.env.EVENT_PATH;
+          const repository = process.env.REPOSITORY;
+          const deliveryBase = process.env.DELIVERY_ID;
+          const tkaiUrl = process.env.DRAUPNIR_TKAI_URL;
+          const statusUrl = process.env.STATUS_URL;
+          const repoUrl = process.env.REPO_URL;
+          const prUrl = process.env.PR_URL;
+          const commentUrl = process.env.COMMENT_URL;
+          const headSha = process.env.PR_HEAD_SHA || '';
+          const baseSha = process.env.PR_BASE_SHA || '';
+          const prNumber = process.env.PR_NUMBER || '';
+          const prAction = process.env.PR_ACTION || '';
+          const prMerged = process.env.PR_MERGED === 'true';
+          const prBaseRef = process.env.PR_BASE_REF || '';
+          let defaultBranch = process.env.DEFAULT_BRANCH || '';
+          const ghToken = process.env.GH_TOKEN || '';
+
+          // Native GitHub webhook payload — forwarded to Draupnir as-is when needed
+          const event = JSON.parse(fs.readFileSync(eventPath, 'utf8'));
+
+          const SA_SK_PREFIX = 'tkai_sa_sk_';
+          const MOCK_LAYOUT = 'draupnir-mock-v1';
+          // Fixed PKCS#8 header for Ed25519 seed → Node crypto private key
+          const PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
+
+          // -----------------------------------------------------------------
+          // HELPER — curlJson
+          // Thin wrapper around curl: writes response body to a temp file,
+          // returns HTTP status + parsed JSON (or null if not JSON).
+          // -----------------------------------------------------------------
+          function curlJson(method, url, headers, bodyObj) {
+            const args = ['-sS', '-o', '/tmp/draupnir-http-body.txt', '-w', '%{http_code}', '-X', method, url];
+            for (const [k, v] of Object.entries(headers)) {
+              args.push('-H', `${k}: ${v}`);
+            }
+            if (bodyObj !== undefined) {
+              fs.writeFileSync('/tmp/draupnir-http-req.json', JSON.stringify(bodyObj));
+              args.push('-H', 'Content-Type: application/json', '--data-binary', '@/tmp/draupnir-http-req.json');
+            }
+            const code = Number(String(execFileSync('curl', args, { encoding: 'utf8' })).trim());
+            const text = fs.readFileSync('/tmp/draupnir-http-body.txt', 'utf8');
+            return { code, text, json: (() => { try { return JSON.parse(text); } catch { return null; } })() };
+          }
+
+          function b64urlJson(obj) {
+            return Buffer.from(JSON.stringify(obj)).toString('base64url');
+          }
+
+          /** Load 32-byte Ed25519 seed from tkai_sa_sk_<base64url>. */
+          function loadSaSeed(privateKeyString) {
+            if (!privateKeyString.startsWith(SA_SK_PREFIX)) {
+              throw new Error('SA_PRIVATE_KEY must start with tkai_sa_sk_');
+            }
+            const seed = Buffer.from(privateKeyString.slice(SA_SK_PREFIX.length), 'base64url');
+            if (seed.length !== 32) throw new Error(`SA seed length ${seed.length}, expected 32`);
+            return seed;
+          }
+
+          /**
+           * Mint a short-lived EdDSA JWT (aud=tkai, sub=handle, ≤60s).
+           * TKAI verifies against the stored SA public key; Draupnir only forwards it.
+           */
+          function mintTkaiJwt(handle, seed) {
+            const key = crypto.createPrivateKey({
+              key: Buffer.concat([PKCS8_PREFIX, seed]),
+              format: 'der',
+              type: 'pkcs8',
+            });
+            const now = Math.floor(Date.now() / 1000);
+            const header = b64urlJson({ alg: 'EdDSA' });
+            const payload = b64urlJson({ sub: handle, aud: 'tkai', iat: now, exp: now + 60 });
+            const signingInput = `${header}.${payload}`;
+            const sig = crypto.sign(null, Buffer.from(signingInput), key);
+            return `${signingInput}.${Buffer.from(sig).toString('base64url')}`;
+          }
+
+          /**
+           * Decrypt machine-reveal payload → 32-byte REK.
+           * Supports layout `draupnir-mock-v1` (mock server + local e2e).
+           * Production X25519 seal layout is still unpublished by TKAI — fail closed.
+           */
+          function decryptRevealToRek(reveal) {
+            if (!reveal?.secretBlob) throw new Error('TKAI reveal missing secretBlob');
+            if (reveal.wrappedKeyBlob == null) {
+              throw new Error('TKAI wrappedKeyBlob is null — admin has not sealed keys for this SA');
+            }
+
+            const layout = reveal.wrappedKeyBlob.layout || reveal.secretBlob.alg;
+            if (layout !== MOCK_LAYOUT) {
+              throw new Error(
+                `Unsupported wrappedKeyBlob layout "${layout || 'unknown'}". ` +
+                  `Only ${MOCK_LAYOUT} is implemented until TKAI publishes the production seal schema.`,
+              );
+            }
+
+            const outerKey = Buffer.from(reveal.wrappedKeyBlob.outerKey, 'base64');
+            const secretKey = Buffer.from(reveal.wrappedKeyBlob.secretKey, 'base64');
+            if (outerKey.length !== 32 || secretKey.length !== 32) {
+              throw new Error('Mock wrapped keys must be 32 bytes');
+            }
+
+            const outerBlob = Buffer.from(reveal.secretBlob.outerBlob, 'base64');
+            // Mock packing: 12-byte IV || ciphertext||tag (AES-256-GCM)
+            if (outerBlob.length <= 12 + 16) throw new Error('outerBlob too short');
+            const outerIv = outerBlob.subarray(0, 12);
+            const outerCt = outerBlob.subarray(12, outerBlob.length - 16);
+            const outerTag = outerBlob.subarray(outerBlob.length - 16);
+            const outerDec = crypto.createDecipheriv('aes-256-gcm', outerKey, outerIv);
+            outerDec.setAuthTag(outerTag);
+            const innerCiphertext = Buffer.concat([outerDec.update(outerCt), outerDec.final()]);
+
+            const innerIv = Buffer.from(reveal.secretBlob.innerIv, 'base64');
+            if (innerCiphertext.length <= 16) throw new Error('inner ciphertext too short');
+            const innerCt = innerCiphertext.subarray(0, innerCiphertext.length - 16);
+            const innerTag = innerCiphertext.subarray(innerCiphertext.length - 16);
+            const innerDec = crypto.createDecipheriv('aes-256-gcm', secretKey, innerIv);
+            innerDec.setAuthTag(innerTag);
+            const plaintext = Buffer.concat([innerDec.update(innerCt), innerDec.final()]).toString('utf8');
+            const parsed = JSON.parse(plaintext);
+            const rekB64 = parsed?.secret?.rek;
+            if (!rekB64) throw new Error('Decrypted secret JSON missing secret.rek');
+            const rek = Buffer.from(rekB64, 'base64');
+            if (rek.length !== 32) throw new Error(`REK length ${rek.length}`);
+            return rek;
+          }
+
+          // -----------------------------------------------------------------
+          // HELPER — loadRek(handle, secretId)
+          // WHY: Draupnir never holds plaintext REK. Actions must:
+          //   1. Mint EdDSA JWT with SA seed (sub=handle, aud=tkai)
+          //   2. POST { sign, secretId } to Draupnir TKAI forwarder (/v1/tkai)
+          //      handle + secretId come from GET repo/status (repository row)
+          //   3. Receive secretBlob + wrappedKeyBlob (opaque passthrough)
+          //   4. Unseal + decrypt locally → 32-byte REK for AES-GCM file crypto
+          // -----------------------------------------------------------------
+          function loadRek(handle, secretId) {
+            if (!handle) throw new Error('status.handle is required to mint the TKAI JWT');
+            if (!secretId) throw new Error('status.secretId is required for TKAI reveal');
+            const seed = loadSaSeed(saPrivateKey);
+            const token = mintTkaiJwt(handle, seed);
+            const { code, text, json } = curlJson(
+              'POST',
+              tkaiUrl,
+              { Authorization: `Bearer ${apiKey}` },
+              { sign: token, secretId },
+            );
+            if (code < 200 || code >= 300) throw new Error(`TKAI HTTP ${code}: ${text}`);
+            const rek = decryptRevealToRek(json);
+            fs.writeFileSync('/tmp/rek.bin', rek);
+            return rek;
+          }
+
+          // -----------------------------------------------------------------
+          // HELPER — encryptBuf(rek, buf)
+          // AES-256-GCM per file. IV is random 12 bytes; auth tag proves integrity.
+          // Draupnir stores these fields as opaque ciphertext (never decrypts).
+          // -----------------------------------------------------------------
+          function encryptBuf(rek, buf) {
+            const iv = crypto.randomBytes(12);
+            const cipher = crypto.createCipheriv('aes-256-gcm', rek, iv);
+            const ciphertext = Buffer.concat([cipher.update(buf), cipher.final()]);
+            const tag = cipher.getAuthTag();
+            return {
+              alg: 'AES-256-GCM',
+              iv: iv.toString('base64'),
+              tag: tag.toString('base64'),
+              ciphertext: ciphertext.toString('base64'),
+              signAlg: 'EdDSA',
+            };
+          }
+
+          // -----------------------------------------------------------------
+          // HELPER — postWebhook(url, deliveryId, body)
+          // Authenticated JSON POST to a /github/webhook-action/* route.
+          // X-GitHub-Event / X-GitHub-Delivery mirror GitHub App webhook headers
+          // so Draupnir can correlate and enqueue the same way.
+          // -----------------------------------------------------------------
+          function postWebhook(url, deliveryId, body) {
+            const { code, text } = curlJson(
+              'POST',
+              url,
+              {
+                Authorization: `Bearer ${apiKey}`,
+                'X-GitHub-Event': eventName,
+                'X-GitHub-Delivery': deliveryId,
+              },
+              body,
+            );
+            console.log(`POST ${url} (${deliveryId}) → HTTP ${code}`);
+            console.log(text);
+            if (code < 200 || code >= 300) throw new Error(`Draupnir HTTP ${code}`);
+          }
+
+          // -----------------------------------------------------------------
+          // HELPER — multipartUpload(url, deliveryId, rek, parts)
+          // WHY multipart: large trees exceed a single request body (25mb limit).
+          // Protocol:
+          //   init     — open upload session with total part count
+          //   part × N — one encrypted file per request (path + status + blob)
+          //   complete — tell Draupnir to materialize ONE repository_snapshot
+          // -----------------------------------------------------------------
+          function multipartUpload(url, deliveryId, rek, parts) {
+            const uploadId = randomUUID();
+            // init: include full GitHub event so Draupnir can fill repo metadata
+            postWebhook(url, deliveryId, {
+              ...event,
+              _draupnirUpload: { phase: 'init', uploadId, total: parts.length },
+            });
+            for (let index = 0; index < parts.length; index += 1) {
+              const part = parts[index];
+              console.log(`part ${index + 1}/${parts.length}: ${part.path} (${part.content.length} B)`);
+              postWebhook(url, deliveryId, {
+                _draupnirUpload: {
+                  phase: 'part',
+                  uploadId,
+                  index,
+                  total: parts.length,
+                  path: part.path,
+                  status: part.status || 'added',
+                  encrypted: encryptBuf(rek, part.content),
+                },
+              });
+            }
+            postWebhook(url, deliveryId, { _draupnirUpload: { phase: 'complete', uploadId, total: parts.length } });
+          }
+
+          // =================================================================
+          // STEP 4 — GET /github/webhook-action/repo/status
+          // Ask Draupnir whether this repo is registered as e2e and whether a
+          // default-branch snapshot is still needed (isPending).
+          // If the row does not exist or isE2E=false → exit (wrong class of repo).
+          // =================================================================
+          const statusQs = `fullName=${encodeURIComponent(repository)}`;
+          const status = curlJson('GET', `${statusUrl}?${statusQs}`, { Authorization: `Bearer ${apiKey}` });
+          if (status.code < 200 || status.code >= 300) {
+            throw new Error(`repo/status HTTP ${status.code}: ${status.text}`);
+          }
+          console.log('status', status.json);
+          if (!status.json?.exists || !status.json?.isE2E) {
+            console.log('Repo not registered as e2e — skip');
+            process.exit(0);
+          }
+          const saHandle = status.json.handle;
+          const saSecretId = status.json.secretId;
+          if (!saHandle) {
+            throw new Error('status.handle missing — E2E repos require a TKAI service-account handle');
+          }
+          if (!saSecretId) {
+            throw new Error('status.secretId missing — E2E repos require a TKAI secret id');
+          }
+          // Prefer Draupnir's stored default branch if the event omitted it
+          if (!defaultBranch && status.json.defaultBranch) {
+            defaultBranch = status.json.defaultBranch;
+          }
+          if (!defaultBranch) defaultBranch = 'main';
+
+          // =================================================================
+          // STEP 5 — Decide whether to upload the default-branch tree
+          // needDefault when:
+          //   - isPending=true (first bootstrap after FE import), OR
+          //   - PR closed + merged into the default branch (refresh snapshot)
+          // =================================================================
+          let needDefault = status.json.isPending === true;
+          if (eventName === 'pull_request' && prAction === 'closed' && prMerged && prBaseRef === defaultBranch) {
+            needDefault = true;
+          }
+
+          // List every file path on origin/<defaultBranch>
+          function listDefaultFiles() {
+            try {
+              execFileSync('git', ['fetch', '--no-tags', 'origin', defaultBranch], { stdio: 'pipe' });
+              const out = execFileSync('git', ['ls-tree', '-r', '--name-only', `origin/${defaultBranch}`], {
+                encoding: 'utf8',
+                maxBuffer: 50 * 1024 * 1024,
+              });
+              return out.split('\n').map((s) => s.trim()).filter(Boolean);
+            } catch (e) {
+              console.warn('ls-tree default branch failed', e.message || e);
+              return [];
+            }
+          }
+
+          // Read one default-branch file blob (empty buffer if missing)
+          function readDefaultFile(rel) {
+            try {
+              return execFileSync('git', ['show', `origin/${defaultBranch}:${rel}`], { maxBuffer: 20 * 1024 * 1024 });
+            } catch {
+              return Buffer.alloc(0);
+            }
+          }
+
+          // =================================================================
+          // STEP 6 — Upload default branch → POST …/repo
+          // Skip empty / oversized files (~18 MiB plaintext cap matches Draupnir).
+          // One multipart session → one default repository_snapshot; clears isPending.
+          // =================================================================
+          if (needDefault) {
+            console.log('Uploading default branch via POST …/repo');
+            const deliveryId = `${deliveryBase}-repo`;
+            const rek = loadRek(saHandle, saSecretId);
+            const paths = listDefaultFiles();
+            const parts = [];
+            for (const p of paths) {
+              const content = readDefaultFile(p);
+              if (!content.length || content.length > 18 * 1024 * 1024) continue;
+              parts.push({ path: p, status: 'added', content });
+            }
+            if (!parts.length) console.warn('No default-branch files found');
+            else multipartUpload(repoUrl, deliveryId, rek, parts);
+          }
+
+          // =================================================================
+          // STEP 7 — Comment / review events → POST …/comment
+          // No encryption: Draupnir upserts from the GitHub event JSON only.
+          // Exit early so we do not also upload a PR file tree on these events.
+          // =================================================================
+          const isComment =
+            eventName === 'issue_comment' ||
+            eventName === 'pull_request_review' ||
+            eventName === 'pull_request_review_comment';
+
+          if (isComment) {
+            postWebhook(commentUrl, `${deliveryBase}-comment`, event);
+            process.exit(0);
+          }
+
+          // Only pull_request events continue to PR file upload below
+          if (eventName !== 'pull_request') {
+            console.log(`Skip PR upload for ${eventName}`);
+            process.exit(0);
+          }
+
+          // =================================================================
+          // STEP 8 — Collect PR changed files
+          // Prefer local git diff (base…head). Fall back to GitHub REST
+          // /pulls/{n}/files when the local diff is empty (shallow / fetch miss).
+          // =================================================================
+          fs.mkdirSync('/tmp/draupnir-changes', { recursive: true });
+          fs.writeFileSync('/tmp/draupnir-changes/name-status.bin', Buffer.alloc(0));
+          fs.writeFileSync('/tmp/draupnir-changes/files.json', '[]');
+
+          if (baseSha && headSha && fs.existsSync('.git')) {
+            try {
+              execFileSync('git', ['fetch', '--no-tags', 'origin', baseSha, headSha], { stdio: 'pipe' });
+            } catch { /* ignore — may already be present from checkout */ }
+            try {
+              let diff;
+              try {
+                // Three-dot diff needs a merge-base; falls back to two-dot below
+                execFileSync('git', ['merge-base', baseSha, headSha], { stdio: 'pipe' });
+                diff = execFileSync('git', ['diff', '--name-status', '-z', `${baseSha}...${headSha}`]);
+              } catch {
+                diff = execFileSync('git', ['diff', '--name-status', '-z', baseSha, headSha]);
+              }
+              fs.writeFileSync('/tmp/draupnir-changes/name-status.bin', diff);
+            } catch { /* ignore */ }
+          }
+
+          // Fallback: GitHub Files API when git diff produced nothing
+          if (fs.statSync('/tmp/draupnir-changes/name-status.bin').size === 0 && prNumber && ghToken) {
+            const api = execFileSync(
+              'curl',
+              [
+                '-sS',
+                '-H', `Authorization: Bearer ${ghToken}`,
+                '-H', 'Accept: application/vnd.github+json',
+                '-H', 'X-GitHub-Api-Version: 2022-11-28',
+                `https://api.github.com/repos/${repository}/pulls/${prNumber}/files?per_page=100`,
+              ],
+              { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 },
+            );
+            fs.writeFileSync('/tmp/draupnir-changes/files.json', api);
+          }
+
+          // Parse NUL-separated `git diff --name-status -z` output
+          const ns = fs.readFileSync('/tmp/draupnir-changes/name-status.bin');
+          const named = [];
+          let i = 0;
+          while (i < ns.length) {
+            let j = ns.indexOf(0, i);
+            if (j < 0) break;
+            const status = ns.slice(i, j).toString('utf8');
+            i = j + 1;
+            j = ns.indexOf(0, i);
+            if (j < 0) break;
+            let filePath = ns.slice(i, j).toString('utf8');
+            i = j + 1;
+            // Rename/copy: status, old path, new path — keep the new path
+            if (status.startsWith('R') || status.startsWith('C')) {
+              j = ns.indexOf(0, i);
+              if (j < 0) break;
+              filePath = ns.slice(i, j).toString('utf8');
+              i = j + 1;
+            }
+            if (filePath) named.push({ status: status[0], path: filePath });
+          }
+
+          // If git diff was empty, map GitHub API file statuses into the same shape
+          if (!named.length) {
+            try {
+              const apiFiles = JSON.parse(fs.readFileSync('/tmp/draupnir-changes/files.json', 'utf8'));
+              const map = { added: 'A', modified: 'M', removed: 'D', renamed: 'R', copied: 'C', changed: 'M' };
+              if (Array.isArray(apiFiles)) {
+                for (const f of apiFiles) {
+                  if (f?.filename) named.push({ status: map[f.status] || 'M', path: f.filename });
+                }
+              }
+            } catch { /* ignore */ }
+          }
+
+          // =================================================================
+          // STEP 9 — Read file contents at PR head (empty for deletions)
+          // Skip files larger than ~18 MiB plaintext (same cap as default upload).
+          // =================================================================
+          const statusMap = { A: 'added', M: 'modified', D: 'removed', R: 'renamed', C: 'copied', T: 'modified' };
+          const parts = [];
+          for (const part of named) {
+            let content = Buffer.alloc(0);
+            if (part.status !== 'D') {
+              try {
+                content = execFileSync('git', ['show', `${headSha}:${part.path}`], { maxBuffer: 20 * 1024 * 1024 });
+              } catch {
+                // Last resort: path on disk from checkout
+                try { content = fs.readFileSync(part.path); } catch { content = Buffer.alloc(0); }
+              }
+            }
+            if (content.length > 18 * 1024 * 1024) continue;
+            parts.push({ path: part.path, status: statusMap[part.status] || 'modified', content });
+          }
+
+          console.log(`PR changed files: ${parts.length}`);
+          if (!parts.length) {
+            console.log('No PR files to upload');
+            process.exit(0);
+          }
+
+          // =================================================================
+          // STEP 10 — Encrypt PR files → POST …/pull-request (multipart)
+          // Fresh REK for this delivery; one snapshot after complete.
+          // =================================================================
+          const deliveryId = `${deliveryBase}-pr`;
+          const rek = loadRek(saHandle, saSecretId);
+          multipartUpload(prUrl, deliveryId, rek, parts);
+          NODE
+
+          # -------------------------------------------------------------------
+          # STEP 11 — Wipe secrets from the runner filesystem
+          # REK must not linger on the ephemeral disk.
+          # -------------------------------------------------------------------
+          rm -f /tmp/rek.bin /tmp/draupnir-http-body.txt /tmp/draupnir-http-req.json
