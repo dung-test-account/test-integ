@@ -1,0 +1,455 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#07080d;--bg2:#0d0f17;--fg:#f5f7fa;--muted:#8b91a7;--muted2:#5d6378;--yellow:#ffd60a;--blue:#3b82f6;--blue-soft:#60a5fa;--cyan:#06ffe0;--red:#ff4757;--green:#2ed573;--border:rgba(255,255,255,0.08);--border-strong:rgba(255,255,255,0.14);}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif;overflow-x:hidden;font-size:14px;line-height:1.5}
+.mesh-bg{position:fixed;inset:0;z-index:-3;background:radial-gradient(ellipse 70% 50% at 15% 0%,rgba(59,130,246,.18),transparent 60%),radial-gradient(ellipse 50% 40% at 85% 15%,rgba(6,255,224,.10),transparent 60%),radial-gradient(ellipse 60% 50% at 50% 100%,rgba(255,214,10,.07),transparent 60%),var(--bg)}
+.grid-bg{position:fixed;inset:0;z-index:-2;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:64px 64px;mask-image:radial-gradient(ellipse at center,black 0%,transparent 75%)}
+.orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:.5;pointer-events:none}
+.orb1{width:500px;height:500px;background:radial-gradient(circle,rgba(59,130,246,.5),transparent 70%);top:-100px;left:-150px;animation:f1 18s ease-in-out infinite}
+.orb2{width:400px;height:400px;background:radial-gradient(circle,rgba(6,255,224,.35),transparent 70%);top:200px;right:-100px;animation:f2 22s ease-in-out infinite}
+.orb3{width:350px;height:350px;background:radial-gradient(circle,rgba(255,214,10,.25),transparent 70%);bottom:-100px;left:30%;animation:f3 25s ease-in-out infinite}
+@keyframes f1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(60px,40px) scale(1.1)}}
+@keyframes f2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-50px,60px) scale(.9)}}
+@keyframes f3{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(40px,-50px) scale(1.15)}}
+.grad-text{background:linear-gradient(135deg,#ffd60a 0%,#06ffe0 50%,#3b82f6 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;background-size:200%;animation:gs 8s ease infinite}
+@keyframes gs{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+nav{position:sticky;top:0;z-index:50;background:rgba(7,8,13,.7);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between}
+.logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px}
+.nav-links{display:flex;gap:24px;font-size:13px;color:var(--muted)}
+.nav-links a{color:var(--muted);text-decoration:none;transition:color .2s}
+.nav-links a:hover{color:var(--fg)}
+.btn-y{background:var(--yellow);color:#0a0a0f;font-weight:700;padding:8px 18px;border-radius:8px;font-size:13px;border:none;cursor:pointer;transition:transform .2s,box-shadow .3s}
+.btn-y:hover{transform:translateY(-2px);box-shadow:0 8px 24px -4px rgba(255,214,10,.5)}
+.btn-g{background:rgba(255,255,255,.04);border:1px solid var(--border-strong);color:var(--fg);padding:8px 18px;border-radius:8px;font-size:13px;cursor:pointer;transition:all .2s}
+.btn-g:hover{background:rgba(255,255,255,.08);border-color:var(--cyan);color:var(--cyan)}
+/* HERO */
+.hero{position:relative;min-height:100vh;display:flex;align-items:center;padding:80px 24px 40px;overflow:hidden}
+canvas{position:absolute;inset:0;width:100%;height:100%;z-index:0;opacity:.7}
+.hero-content{position:relative;z-index:1;max-width:560px}
+.status-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:99px;font-size:11px;font-weight:600;background:rgba(46,213,115,.1);color:var(--green);border:1px solid rgba(46,213,115,.2);margin-bottom:20px}
+.status-pill::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pd 2s ease-in-out infinite}
+@keyframes pd{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+h1{font-size:clamp(36px,6vw,64px);font-weight:800;line-height:.95;letter-spacing:-.03em;margin-bottom:20px}
+.hero-sub{color:var(--muted);font-size:16px;max-width:480px;margin-bottom:28px;line-height:1.6}
+.hero-btns{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:28px}
+.hero-checks{display:flex;gap:20px;font-size:12px;color:var(--muted2)}
+.hero-checks span{display:flex;align-items:center;gap:5px}
+.check{color:var(--cyan)}
+.hero-card{position:relative;z-index:1;margin-left:40px;flex:1;max-width:480px}
+.code-win{background:rgba(13,15,23,.9);border:1px solid var(--border-strong);border-radius:14px;overflow:hidden;box-shadow:0 30px 80px -20px rgba(0,0,0,.6),0 0 60px -20px rgba(6,255,224,.3)}
+.code-hdr{background:rgba(255,255,255,.03);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;gap:6px}
+.d{width:11px;height:11px;border-radius:50%}
+.dr{background:#ff5f57}.dy{background:#febc2e}.dg{background:#28c840}
+.code-body{padding:16px;font-family:monospace;font-size:12px;line-height:1.7;min-height:200px}
+.cl{opacity:0;transform:translateX(-6px);animation:ca .4s forwards}
+@keyframes ca{to{opacity:1;transform:translateX(0)}}
+.kw{color:#ff79c6}.st{color:#f1fa8c}.fn{color:#8be9fd}.va{color:#bd93f9}.cm{color:#6272a4;font-style:italic}.nu{color:#50fa7b}.pu{color:#8b91a7}
+.float-badge{position:absolute;background:var(--bg2);border:1px solid var(--border-strong);border-radius:10px;padding:10px 12px;box-shadow:0 20px 40px rgba(0,0,0,.4)}
+.fb1{top:-16px;right:-16px;animation:f2 6s ease-in-out infinite}
+.fb2{bottom:-20px;left:-20px;animation:f1 7s ease-in-out infinite}
+.fb-inner{display:flex;align-items:center;gap:8px}
+.fb-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px}
+.fb-text div:first-child{font-size:10px;color:var(--muted)}
+.fb-text div:last-child{font-size:13px;font-weight:600}
+/* TRUSTED */
+.trusted{padding:40px 24px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:rgba(13,15,23,.4)}
+.trusted p{text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.2em;color:var(--muted2);margin-bottom:20px}
+.marquee{overflow:hidden;mask-image:linear-gradient(90deg,transparent,black 10%,black 90%,transparent)}
+.mtrack{display:flex;gap:56px;animation:mq 30s linear infinite;width:max-content;align-items:center}
+@keyframes mq{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.mtrack span{font-size:20px;font-weight:700;opacity:.5;color:var(--muted);transition:opacity .2s;white-space:nowrap}
+.mtrack span:hover{opacity:1}
+/* FEATURES */
+.section{padding:80px 24px;max-width:1200px;margin:0 auto}
+.kicker{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:99px;background:rgba(6,255,224,.06);border:1px solid rgba(6,255,224,.2);color:var(--cyan);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-bottom:16px}
+.kicker-y{background:rgba(255,214,10,.06);border-color:rgba(255,214,10,.2);color:var(--yellow)}
+.kicker-b{background:rgba(59,130,246,.06);border-color:rgba(59,130,246,.2);color:var(--blue-soft)}
+h2{font-size:clamp(28px,4vw,52px);font-weight:800;letter-spacing:-.03em;line-height:1.05;margin-bottom:16px}
+.sec-sub{font-size:16px;color:var(--muted);max-width:580px;margin-bottom:48px;line-height:1.6}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.card{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:14px;padding:24px;transition:transform .3s,border-color .3s;position:relative;overflow:hidden}
+.card:hover{transform:translateY(-4px);border-color:rgba(6,255,224,.25)}
+.card-icon{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:14px;font-size:20px}
+.iy{background:rgba(255,214,10,.1);color:var(--yellow);border:1px solid rgba(255,214,10,.2)}
+.ic{background:rgba(6,255,224,.1);color:var(--cyan);border:1px solid rgba(6,255,224,.2)}
+.ib{background:rgba(59,130,246,.1);color:var(--blue-soft);border:1px solid rgba(59,130,246,.2)}
+.card h3{font-size:17px;font-weight:700;margin-bottom:8px}
+.card p{font-size:13px;color:var(--muted);line-height:1.6}
+.tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:12px}
+.tag{font-size:10px;font-family:monospace;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.05);color:var(--muted)}
+/* SECURITY */
+.sec-layout{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center;padding:80px 24px;max-width:1200px;margin:0 auto}
+.shield-stage{position:relative;width:100%;aspect-ratio:1;max-width:360px;margin:0 auto}
+.ring{position:absolute;inset:0;border-radius:50%;border:1px solid rgba(255,255,255,.06)}
+.r2{inset:8%;border-color:rgba(6,255,224,.1)}
+.r3{inset:16%;border-color:rgba(255,214,10,.12)}
+.r4{inset:24%;border-color:rgba(59,130,246,.12)}
+.dr-ring{position:absolute;inset:6%;border-radius:50%;border:1px dashed rgba(6,255,224,.3);animation:rot 30s linear infinite}
+.dr-ring2{position:absolute;inset:14%;border-radius:50%;border:1px dashed rgba(255,214,10,.25);animation:rot 18s linear infinite reverse}
+@keyframes rot{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+.scan{position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 0deg,transparent 0deg,transparent 320deg,rgba(6,255,224,.4) 350deg,rgba(6,255,224,.8) 360deg);-webkit-mask:radial-gradient(circle,transparent 40%,black 41%,black 100%);mask:radial-gradient(circle,transparent 40%,black 41%,black 100%);animation:rot 4s linear infinite}
+.shield-core{position:absolute;inset:30%;border-radius:50%;background:radial-gradient(circle,rgba(6,255,224,.15),rgba(6,255,224,.02) 70%);border:1px solid rgba(6,255,224,.3);display:flex;align-items:center;justify-content:center;animation:pc 3s ease-in-out infinite;font-size:36px}
+@keyframes pc{0%,100%{box-shadow:0 0 60px rgba(6,255,224,.2)}50%{box-shadow:0 0 90px rgba(6,255,224,.35)}}
+.pr{position:absolute;inset:30%;border-radius:50%;border:2px solid rgba(6,255,224,.5);animation:po 3s ease-out infinite;pointer-events:none}
+.pr2{animation-delay:1s}.pr3{animation-delay:2s}
+@keyframes po{0%{transform:scale(1);opacity:.8}100%{transform:scale(2.2);opacity:0}}
+.threat{position:absolute;width:8px;height:8px;border-radius:50%;background:var(--red);box-shadow:0 0 12px var(--red);transform:translate(-50%,-50%)}
+.threat.ok{background:var(--green);box-shadow:0 0 12px var(--green);transition:all .5s}
+.act-item{background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:10px;font-size:12px;margin-bottom:6px;opacity:0;transform:translateX(16px);animation:si .5s forwards}
+@keyframes si{to{opacity:1;transform:translateX(0)}}
+.adot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+/* STATS */
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;padding:60px 24px;max-width:1200px;margin:0 auto;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.stat-num{font-size:clamp(32px,5vw,52px);font-weight:800;letter-spacing:-.04em;line-height:1}
+.stat-label{font-size:12px;color:var(--muted);margin-top:6px}
+/* PRICING */
+.price-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:1000px;margin:0 auto}
+.pcard{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:18px;padding:28px;transition:all .3s;position:relative}
+.pcard:hover{transform:translateY(-4px);border-color:var(--border-strong)}
+.pcard.feat{border-color:rgba(255,214,10,.4);background:linear-gradient(180deg,rgba(255,214,10,.04),rgba(255,214,10,.01));box-shadow:0 0 60px -20px rgba(255,214,10,.4)}
+.pcard-tier{font-size:11px;text-transform:uppercase;letter-spacing:.15em;margin-bottom:6px;color:var(--muted)}
+.pcard-tier.y{color:var(--yellow)}
+.pcard-tier.b{color:var(--blue-soft)}
+.price{font-size:clamp(32px,4vw,48px);font-weight:800;letter-spacing:-.04em;line-height:1}
+.price-sub{font-size:13px;color:var(--muted);margin-bottom:20px;margin-top:4px}
+.pbest{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--yellow);color:#0a0a0f;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.15em;padding:3px 10px;border-radius:99px}
+.pfeat{display:flex;flex-direction:column;gap:10px;margin-top:20px;font-size:13px}
+.pfeat li{display:flex;align-items:center;gap:8px;list-style:none}
+.pcheck{font-size:10px}
+/* CTA */
+.cta{padding:80px 24px;text-align:center;background:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(255,214,10,.12),transparent 60%),radial-gradient(ellipse 60% 50% at 20% 100%,rgba(59,130,246,.1),transparent 60%),var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.reveal{opacity:0;transform:translateY(32px);transition:opacity .8s cubic-bezier(.2,.8,.2,1),transform .8s cubic-bezier(.2,.8,.2,1)}
+.revealed{opacity:1;transform:translateY(0)}
+.rd1{transition-delay:.1s}.rd2{transition-delay:.2s}.rd3{transition-delay:.3s}
+@media(max-width:768px){.hero{flex-direction:column}.hero-card{margin-left:0;margin-top:32px}.sec-layout{grid-template-columns:1fr}.stats-grid{grid-template-columns:1fr 1fr}.price-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="mesh-bg"></div>
+<div class="grid-bg"></div>
+
+<nav>
+  <div class="logo">
+    <svg width="28" height="28" viewBox="0 0 32 32">
+      <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ffd60a"/><stop offset="50%" stop-color="#06ffe0"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>
+      <path d="M16 2L28 8L28 18Q28 26 16 30Q4 26 4 18L4 8Z" fill="none" stroke="url(#lg)" stroke-width="2"/>
+      <path d="M11 16L15 20L21 12" fill="none" stroke="url(#lg)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    Sentinel
+  </div>
+  <div class="nav-links">
+    <a href="#features">Platform</a>
+    <a href="#security">Security</a>
+    <a href="#developers">Developers</a>
+    <a href="#pricing">Pricing</a>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center">
+    <span style="font-size:13px;color:var(--muted);cursor:pointer">Sign in</span>
+    <button class="btn-y">Get started →</button>
+  </div>
+</nav>
+
+<!-- HERO -->
+<header class="hero" id="hero-section">
+  <canvas id="pc"></canvas>
+  <div class="orb orb1"></div>
+  <div class="orb orb2"></div>
+  <div class="orb orb3"></div>
+  <div class="hero-content reveal">
+    <div class="status-pill">All systems operational</div>
+    <h1>Security<br>infrastructure<br>for the <span class="grad-text">modern web</span></h1>
+    <p class="hero-sub">Sentinel gives you passwordless auth, real-time threat detection, and identity verification — engineered for developers who refuse to compromise.</p>
+    <div class="hero-btns">
+      <button class="btn-y">Start building free →</button>
+      <button class="btn-g">▶ Watch demo</button>
+    </div>
+    <div class="hero-checks">
+      <span><span class="check">✓</span> No credit card</span>
+      <span><span class="check">✓</span> 10k MAU free</span>
+      <span><span class="check">✓</span> Deploy in 5 min</span>
+    </div>
+  </div>
+  <div class="hero-card reveal rd2">
+    <div class="code-win">
+      <div class="code-hdr">
+        <div class="d dr"></div><div class="d dy"></div><div class="d dg"></div>
+        <span style="margin-left:8px;font-size:11px;color:var(--muted);font-family:monospace">auth.ts — sentinel-sdk</span>
+        <div style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:600;background:rgba(46,213,115,.1);color:var(--green);border:1px solid rgba(46,213,115,.2)"><span style="width:5px;height:5px;border-radius:50%;background:var(--green);display:inline-block"></span>LIVE</div>
+      </div>
+      <div class="code-body" id="cb"></div>
+      <div style="border-top:1px solid var(--border);padding:8px 16px;display:flex;justify-content:space-between;font-size:11px;color:var(--muted2)">
+        <span>🔒 Encrypted · ⚡ 12ms p95</span>
+        <span style="font-family:monospace">us-east-1</span>
+      </div>
+    </div>
+    <div class="float-badge fb1">
+      <div class="fb-inner">
+        <div class="fb-icon" style="background:rgba(46,213,115,.1);border:1px solid rgba(46,213,115,.2)">✓</div>
+        <div class="fb-text"><div>Threat blocked</div><div>SQL injection · 0.2s ago</div></div>
+      </div>
+    </div>
+    <div class="float-badge fb2">
+      <div class="fb-inner">
+        <div class="fb-icon" style="background:rgba(255,214,10,.1);border:1px solid rgba(255,214,10,.2);color:var(--yellow)">👆</div>
+        <div class="fb-text"><div>Passkey verified</div><div>12,840 auth/min</div></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- TRUSTED BY -->
+<div class="trusted reveal">
+  <p>Trusted by 4,000+ teams shipping at scale</p>
+  <div class="marquee">
+    <div class="mtrack">
+      <span>Northwind</span><span>QuantumLabs</span><span>Helios</span><span>Vertex.io</span><span>Cascade</span><span>Monolith</span><span>Aperture</span><span>Stratosphere</span>
+      <span>Northwind</span><span>QuantumLabs</span><span>Helios</span><span>Vertex.io</span><span>Cascade</span><span>Monolith</span><span>Aperture</span><span>Stratosphere</span>
+    </div>
+  </div>
+</div>
+
+<!-- FEATURES -->
+<div class="section" id="features">
+  <div class="reveal">
+    <span class="kicker">⬡ The platform</span>
+    <h2>One API for <span class="grad-text">auth, threats, and identity</span></h2>
+    <p class="sec-sub">Stop stitching together five different vendors. Sentinel unifies the entire security stack into a single, performant SDK.</p>
+  </div>
+  <div class="cards">
+    <div class="card reveal"><div class="card-icon iy">👆</div><h3>Passwordless auth</h3><p>WebAuthn passkeys, magic links, and OIDC — all wired up out of the box. Phishing-resistant by default.</p><div class="tags"><span class="tag">passkeys</span><span class="tag">OIDC</span><span class="tag">SAML</span></div></div>
+    <div class="card reveal rd1"><div class="card-icon ic">📡</div><h3>Threat detection</h3><p>Real-time ML models score every request for credential stuffing, ATO, and bot traffic — at the edge.</p><div class="tags"><span class="tag">bot defense</span><span class="tag">ATO</span></div></div>
+    <div class="card reveal rd2"><div class="card-icon ib">🛡</div><h3>Identity verification</h3><p>Step-up KYC, document verification, and liveness checks without bouncing users out of your flow.</p><div class="tags"><span class="tag">KYC</span><span class="tag">liveness</span></div></div>
+    <div class="card reveal"><div class="card-icon iy">⑂</div><h3>RBAC & permissions</h3><p>Fine-grained roles, resource scopes, and policy-as-code. Audit every decision with full event replay.</p><div class="tags"><span class="tag">RBAC</span><span class="tag">ABAC</span></div></div>
+    <div class="card reveal rd1"><div class="card-icon ic">🌐</div><h3>Edge sessions</h3><p>Sessions live at 280+ POPs. Validate any request in under 5ms, no matter where your users are.</p><div class="tags"><span class="tag">280 POPs</span><span class="tag">5ms p99</span></div></div>
+    <div class="card reveal rd2"><div class="card-icon ib">📋</div><h3>Compliance reports</h3><p>SOC2 Type II, ISO 27001, HIPAA, and GDPR artifacts ready on day one. Auditor-ready exports in one click.</p><div class="tags"><span class="tag">SOC2</span><span class="tag">HIPAA</span></div></div>
+  </div>
+</div>
+
+<!-- SECURITY VIZ -->
+<div class="sec-layout" id="security">
+  <div class="reveal">
+    <span class="kicker kicker-y">📡 Live defense</span>
+    <h2>See threats<br><span class="grad-text">neutralized in real time</span></h2>
+    <p style="color:var(--muted);font-size:15px;line-height:1.6;margin-bottom:24px">Our edge network inspects 4.2 billion requests every day. Watch the shield adapt, score, and block malicious traffic.</p>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div style="display:flex;gap:10px;align-items:flex-start"><div style="width:22px;height:22px;border-radius:50%;background:rgba(6,255,224,.1);border:1px solid rgba(6,255,224,.2);display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;margin-top:2px;color:var(--cyan)">✓</div><div><div style="font-weight:600;margin-bottom:2px">Sub-10ms verdicts</div><div style="font-size:13px;color:var(--muted)">ML scoring runs at the edge — no round-trips, no latency tax.</div></div></div>
+      <div style="display:flex;gap:10px;align-items:flex-start"><div style="width:22px;height:22px;border-radius:50%;background:rgba(255,214,10,.1);border:1px solid rgba(255,214,10,.2);display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;margin-top:2px;color:var(--yellow)">✓</div><div><div style="font-weight:600;margin-bottom:2px">Adaptive rulesets</div><div style="font-size:13px;color:var(--muted)">Policies update every 90 seconds across the entire fleet.</div></div></div>
+      <div style="display:flex;gap:10px;align-items:flex-start"><div style="width:22px;height:22px;border-radius:50%;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.2);display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0;margin-top:2px;color:var(--blue-soft)">✓</div><div><div style="font-weight:600;margin-bottom:2px">Full event replay</div><div style="font-size:13px;color:var(--muted)">Every decision is logged, searchable, and exportable to your SIEM.</div></div></div>
+    </div>
+  </div>
+  <div class="reveal rd2" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start">
+    <div class="shield-stage">
+      <div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div><div class="ring r4"></div>
+      <div class="dr-ring"></div><div class="dr-ring2"></div>
+      <div class="scan"></div>
+      <div class="pr"></div><div class="pr pr2"></div><div class="pr pr3"></div>
+      <div id="tc"></div>
+      <div class="shield-core">🛡</div>
+      <div style="position:absolute;inset:0;animation:rot 12s linear infinite"><div style="position:absolute;top:0;left:50%;transform:translateX(-50%);width:7px;height:7px;border-radius:50%;background:var(--yellow);box-shadow:0 0 10px var(--yellow)"></div></div>
+      <div style="position:absolute;inset:0;animation:rot 18s linear infinite reverse"><div style="position:absolute;top:50%;right:0;transform:translateY(-50%);width:7px;height:7px;border-radius:50%;background:var(--blue-soft);box-shadow:0 0 10px var(--blue)"></div></div>
+    </div>
+    <div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;font-size:11px;color:var(--muted2)"><span style="text-transform:uppercase;letter-spacing:.15em">Live activity</span><span style="padding:2px 8px;border-radius:99px;font-size:10px;font-weight:600;background:rgba(46,213,115,.1);color:var(--green);border:1px solid rgba(46,213,115,.2)">streaming</span></div>
+      <div id="af"></div>
+    </div>
+    <div style="grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding-top:20px;border-top:1px solid var(--border)">
+      <div><div style="font-size:22px;font-weight:800;color:var(--cyan)">4.2B</div><div style="font-size:11px;color:var(--muted);margin-top:3px">Requests / day</div></div>
+      <div><div style="font-size:22px;font-weight:800;color:var(--yellow)">99.99%</div><div style="font-size:11px;color:var(--muted);margin-top:3px">Threats blocked</div></div>
+      <div><div style="font-size:22px;font-weight:800;color:var(--blue-soft)">5ms</div><div style="font-size:11px;color:var(--muted);margin-top:3px">p99 verdict</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- STATS -->
+<div class="stats-grid reveal">
+  <div><div class="stat-num grad-text" data-target="4200000000">0</div><div class="stat-label">Requests inspected daily</div></div>
+  <div><div class="stat-num grad-text" data-target="99.99" data-suffix="%" data-decimal="2">0</div><div class="stat-label">Threat detection accuracy</div></div>
+  <div><div class="stat-num grad-text" data-target="280" data-suffix="+">0</div><div class="stat-label">Edge POPs worldwide</div></div>
+  <div><div class="stat-num grad-text" data-target="5" data-suffix="ms">0</div><div class="stat-label">p99 verdict latency</div></div>
+</div>
+
+<!-- PRICING -->
+<div class="section" id="pricing">
+  <div style="text-align:center;margin-bottom:48px" class="reveal">
+    <span class="kicker kicker-y">🏷 Pricing</span>
+    <h2 style="margin-top:16px">Start free. <span class="grad-text">Scale with confidence.</span></h2>
+    <p style="color:var(--muted);font-size:16px;margin-top:8px">Pay only for active users. No seat fees, no surprise overages.</p>
+  </div>
+  <div class="price-grid">
+    <div class="pcard reveal">
+      <div class="pcard-tier">Developer</div>
+      <div class="price">$0</div>
+      <div class="price-sub">/mo — Everything to ship.</div>
+      <button class="btn-g" style="width:100%;margin-bottom:20px">Start free</button>
+      <ul class="pfeat">
+        <li><span class="pcheck" style="color:var(--cyan)">✓</span>10,000 MAU</li>
+        <li><span class="pcheck" style="color:var(--cyan)">✓</span>Passwordless + social</li>
+        <li><span class="pcheck" style="color:var(--cyan)">✓</span>Basic threat scoring</li>
+        <li><span class="pcheck" style="color:var(--cyan)">✓</span>Community support</li>
+      </ul>
+    </div>
+    <div class="pcard feat reveal rd1">
+      <div class="pbest">Most popular</div>
+      <div class="pcard-tier y">Pro</div>
+      <div class="price">$49</div>
+      <div class="price-sub">/mo — For teams at scale.</div>
+      <button class="btn-y" style="width:100%;margin-bottom:20px">Start 14-day trial</button>
+      <ul class="pfeat">
+        <li><span class="pcheck" style="color:var(--yellow)">✓</span>100,000 MAU included</li>
+        <li><span class="pcheck" style="color:var(--yellow)">✓</span>Advanced ML detection</li>
+        <li><span class="pcheck" style="color:var(--yellow)">✓</span>RBAC + custom policies</li>
+        <li><span class="pcheck" style="color:var(--yellow)">✓</span>Priority support · 99.99% SLA</li>
+      </ul>
+    </div>
+    <div class="pcard reveal rd2">
+      <div class="pcard-tier b">Enterprise</div>
+      <div class="price" style="font-size:32px">Custom</div>
+      <div class="price-sub">For regulated, global scale.</div>
+      <button class="btn-g" style="width:100%;margin-bottom:20px">Talk to sales</button>
+      <ul class="pfeat">
+        <li><span class="pcheck" style="color:var(--blue-soft)">✓</span>Unlimited MAU</li>
+        <li><span class="pcheck" style="color:var(--blue-soft)">✓</span>HIPAA · FedRAMP · PCI</li>
+        <li><span class="pcheck" style="color:var(--blue-soft)">✓</span>Dedicated CSM + TAM</li>
+        <li><span class="pcheck" style="color:var(--blue-soft)">✓</span>Custom SLAs & DPA</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- CTA -->
+<div class="cta reveal">
+  <span class="kicker">🚀 Start shipping</span>
+  <h2 style="margin-top:16px;margin-bottom:12px">Security that<br><span class="grad-text">moves at your speed</span></h2>
+  <p style="color:var(--muted);font-size:16px;max-width:520px;margin:0 auto 28px;line-height:1.6">Spin up a project, drop in the SDK, and you're production-ready in an afternoon. No sales calls required.</p>
+  <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+    <button class="btn-y">Get started free →</button>
+    <button class="btn-g">📅 Book a demo</button>
+  </div>
+  <p style="margin-top:16px;font-size:11px;color:var(--muted2)">10,000 free MAU · No credit card · SOC2 Type II</p>
+</div>
+
+<!-- FOOTER -->
+<footer style="border-top:1px solid var(--border);background:var(--bg2);padding:32px 24px">
+  <div style="max-width:1200px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+    <div class="logo">
+      <svg width="24" height="24" viewBox="0 0 32 32"><use href="#lg"/><path d="M16 2L28 8L28 18Q28 26 16 30Q4 26 4 18L4 8Z" fill="none" stroke="url(#lg)" stroke-width="2"/><path d="M11 16L15 20L21 12" fill="none" stroke="url(#lg)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Sentinel
+    </div>
+    <div style="font-size:12px;color:var(--muted2)">© 2025 Sentinel, Inc. All rights reserved.</div>
+    <div style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:600;background:rgba(46,213,115,.1);color:var(--green);border:1px solid rgba(46,213,115,.2)"><span style="width:5px;height:5px;border-radius:50%;background:var(--green);display:inline-block;animation:pd 2s ease-in-out infinite"></span>All systems operational</div>
+  </div>
+</footer>
+
+<script>
+// Particle network
+class PN {
+  constructor(c){this.c=c;this.x=c.getContext('2d');this.p=[];this.m={x:-1e3,y:-1e3};this.dpr=window.devicePixelRatio||1;this.init()}
+  init(){this.resize();this.create();this.bind();this.anim()}
+  resize(){const w=this.c.offsetWidth,h=this.c.offsetHeight;this.c.width=w*this.dpr;this.c.height=h*this.dpr;this.x.scale(this.dpr,this.dpr);this.w=w;this.h=h}
+  create(){this.p=[];const n=Math.min(70,Math.floor(this.w*this.h/14000)),cl=['#ffd60a','#3b82f6','#06ffe0'];for(let i=0;i<n;i++)this.p.push({x:Math.random()*this.w,y:Math.random()*this.h,vx:(Math.random()-.5)*.25,vy:(Math.random()-.5)*.25,r:Math.max(.8,Math.random()*1.8+.8),c:cl[Math.floor(Math.random()*3)],pulse:Math.random()*Math.PI*2})}
+  anim(){
+    this.x.clearRect(0,0,this.w,this.h);
+    this.p.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.pulse+=.02;if(p.x<0||p.x>this.w)p.vx*=-1;if(p.y<0||p.y>this.h)p.vy*=-1;const dx=p.x-this.m.x,dy=p.y-this.m.y,d=Math.sqrt(dx*dx+dy*dy);if(d<120&&d>0){const f=(120-d)/120;p.x+=dx/d*f*1.5;p.y+=dy/d*f*1.5}});
+    for(let i=0;i<this.p.length;i++)for(let j=i+1;j<this.p.length;j++){const a=this.p[i],b=this.p[j],dx=a.x-b.x,dy=a.y-b.y,d=Math.sqrt(dx*dx+dy*dy);if(d<140){this.x.strokeStyle=`rgba(139,145,167,${(1-d/140)*.25})`;this.x.lineWidth=.6;this.x.beginPath();this.x.moveTo(a.x,a.y);this.x.lineTo(b.x,b.y);this.x.stroke()}}
+    this.p.forEach(p=>{const pulse=(Math.sin(p.pulse)+1)*.5,r=Math.max(.5,p.r*(.8+pulse*.4));this.x.beginPath();this.x.arc(p.x,p.y,r,0,Math.PI*2);this.x.fillStyle=p.c;this.x.shadowColor=p.c;this.x.shadowBlur=12;this.x.fill();this.x.shadowBlur=0});
+    requestAnimationFrame(()=>this.anim())
+  }
+  bind(){let t;window.addEventListener('resize',()=>{clearTimeout(t);t=setTimeout(()=>{this.resize();this.create()},200)});this.c.parentElement?.addEventListener('mousemove',e=>{const r=this.c.getBoundingClientRect();this.m.x=e.clientX-r.left;this.m.y=e.clientY-r.top})}
+}
+
+// Hero code typing
+const lines=[
+  {h:'<span class="kw">import</span> <span class="pu">{</span> <span class="va">Sentinel</span> <span class="pu">}</span> <span class="kw">from</span> <span class="st">\'@sentinel/sdk\'</span><span class="pu">;</span>'},
+  {h:''},
+  {h:'<span class="kw">const</span> <span class="va">sentinel</span> <span class="pu">=</span> <span class="kw">new</span> <span class="fn">Sentinel</span><span class="pu">({</span>'},
+  {h:'&nbsp;&nbsp;<span class="va">apiKey</span><span class="pu">:</span> <span class="va">process</span><span class="pu">.</span><span class="va">env</span><span class="pu">.</span><span class="va">SENTINEL_KEY</span><span class="pu">,</span>'},
+  {h:'&nbsp;&nbsp;<span class="va">region</span><span class="pu">:</span> <span class="st">\'us-east-1\'</span>'},
+  {h:'<span class="pu">});</span>'},
+  {h:''},
+  {h:'<span class="cm">// Passwordless sign-in, scored in real time</span>'},
+  {h:'<span class="kw">await</span> <span class="va">sentinel</span><span class="pu">.</span><span class="va">auth</span><span class="pu">.</span><span class="fn">signInWith</span><span class="pu">({</span>'},
+  {h:'&nbsp;&nbsp;<span class="va">method</span><span class="pu">:</span> <span class="st">\'passkey\'</span><span class="pu">,</span>'},
+  {h:'&nbsp;&nbsp;<span class="va">userId</span><span class="pu">:</span> <span class="st">\'usr_8f2a9c\'</span>'},
+  {h:'<span class="pu">});</span>'},
+];
+function typeCode(){
+  const b=document.getElementById('cb');if(!b)return;
+  b.innerHTML='';let i=0;
+  const next=()=>{if(i>=lines.length){setTimeout(()=>{b.innerHTML='';i=0;next()},5000);return;}
+  const d=document.createElement('div');d.className='cl';d.innerHTML=lines[i].h||'&nbsp;';d.style.animationDelay='0s';b.appendChild(d);i++;setTimeout(next,230)};
+  next();
+}
+
+// Activity feed
+const evts=[
+  {t:'Credential stuffing blocked · 188.42.x.x',c:'var(--red)'},
+  {t:'Passkey login · user_8f2a9c',c:'var(--green)'},
+  {t:'SQL injection blocked · /api/users',c:'var(--red)'},
+  {t:'Step-up MFA triggered · user_2c4e',c:'var(--yellow)'},
+  {t:'Token refresh · user_9a1f',c:'var(--green)'},
+  {t:'Bot traffic blocked · 203.0.113.x',c:'var(--red)'},
+];
+function pushAct(){
+  const f=document.getElementById('af');if(!f)return;
+  const e=evts[Math.floor(Math.random()*evts.length)];
+  const d=document.createElement('div');d.className='act-item';
+  d.innerHTML=`<div class="adot" style="background:${e.c}"></div><span style="flex:1">${e.t}</span><span style="font-size:10px;color:var(--muted2);font-family:monospace">${Math.floor(Math.random()*5)}s ago</span>`;
+  f.insertBefore(d,f.firstChild);
+  while(f.children.length>5)f.removeChild(f.lastChild);
+}
+
+// Threats
+function spawnThreat(){
+  const c=document.getElementById('tc');if(!c)return;
+  const a=Math.random()*Math.PI*2,r=35+Math.random()*12;
+  const d=document.createElement('div');d.className='threat';
+  d.style.left=`${50+Math.cos(a)*r}%`;d.style.top=`${50+Math.sin(a)*r}%`;
+  c.appendChild(d);setTimeout(()=>d.classList.add('ok'),800);
+  setTimeout(()=>{d.style.opacity='0';d.style.transition='opacity .5s';setTimeout(()=>d.remove(),500)},1800);
+}
+
+// Counters
+function animCount(el){
+  const target=parseFloat(el.dataset.target),suffix=el.dataset.suffix||'',decimal=parseInt(el.dataset.decimal)||0;
+  const s=performance.now();
+  const step=now=>{
+    const p=Math.min((now-s)/2000,1),e=1-Math.pow(1-p,3),v=target*e;
+    let txt;
+    if(decimal>0)txt=v.toFixed(decimal);
+    else if(target>=1e9)txt=(v/1e9).toFixed(1)+'B';
+    else if(target>=1e6)txt=(v/1e6).toFixed(1)+'M';
+    else txt=Math.floor(v).toString();
+    el.textContent=txt+suffix;
+    if(p<1)requestAnimationFrame(step);
+  };requestAnimationFrame(step);
+}
+
+// Reveal
+const ro=new IntersectionObserver(entries=>{
+  entries.forEach(e=>{
+    if(e.isIntersecting){
+      e.target.classList.add('revealed');
+      e.target.querySelectorAll('[data-target]').forEach(el=>{if(!el.dataset.counted){el.dataset.counted='1';animCount(el)}});
+      if(e.target.dataset.target&&!e.target.dataset.counted){e.target.dataset.counted='1';animCount(e.target)}
+      ro.unobserve(e.target);
+    }
+  });
+},{threshold:0.1});
+document.querySelectorAll('.reveal').forEach(el=>ro.observe(el));
+document.querySelectorAll('[data-target]').forEach(el=>ro.observe(el));
+
+window.addEventListener('load',()=>{
+  const c=document.getElementById('pc');
+  if(c)new PN(c);
+  typeCode();
+  for(let i=0;i<4;i++)setTimeout(pushAct,i*200);
+  setInterval(pushAct,2400);
+  setInterval(spawnThreat,1100);
+});
+</script>
+</body>
+</html>
