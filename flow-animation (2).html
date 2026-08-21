@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Draupnir Flow</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0a0e14; overflow:hidden; }
+  canvas { display:block; position:fixed; top:0; left:0; width:100vw; height:100vh; }
+  #logo-box {
+    position:fixed; top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(10,14,20,0.88);
+    padding:18px 44px; border-radius:10px;
+    pointer-events:none;
+  }
+  .logo-wrap { display:flex; align-items:center; gap:14px; }
+  .logo-text {
+    font-family:'Space Grotesk','Segoe UI',sans-serif;
+    font-size:30px; font-weight:700;
+    color:#fff; letter-spacing:3px;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="logo-box">
+  <div class="logo-wrap">
+    <!-- thay bằng <img src="Logo.svg" style="height:52px;"> khi có logo -->
+    <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+      <circle cx="22" cy="22" r="20" fill="#111827" stroke="#2A7FFF" stroke-width="1.2"/>
+      <path d="M22 6L36 14L36 30L22 38L8 30L8 14Z" fill="none" stroke="#FFDB45" stroke-width="1.8" stroke-linejoin="round"/>
+      <circle cx="22" cy="22" r="5" fill="#64EDD6"/>
+    </svg>
+    <span class="logo-text">DRAUPNIR</span>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+let W, H, dpr, time = 0;
+
+const C = {
+  blue: {r:42,  g:127, b:255},
+  aqua: {r:100, g:237, b:214},
+  gray: {r:150, g:160, b:180},
+  gold: {r:255, g:219, b:69},
+};
+const rgba = (c,a) => `rgba(${c.r},${c.g},${c.b},${a})`;
+const hex  = c     => `rgb(${c.r},${c.g},${c.b})`;
+
+function buildLen(pts){
+  let t=0;
+  for(let i=1;i<pts.length;i++)
+    t+=Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+  return t;
+}
+function ptAt(pts, total, t){
+  let target=t*total, dist=0;
+  for(let i=1;i<pts.length;i++){
+    const seg=Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+    if(dist+seg>=target){
+      const r=(target-dist)/seg;
+      return { x:pts[i-1].x+(pts[i].x-pts[i-1].x)*r,
+               y:pts[i-1].y+(pts[i].y-pts[i-1].y)*r };
+    }
+    dist+=seg;
+  }
+  return {...pts[pts.length-1]};
+}
+function drawRounded(pts, R){
+  if(pts.length<2) return;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for(let i=1;i<pts.length-1;i++)
+    ctx.arcTo(pts[i].x, pts[i].y, pts[i+1].x, pts[i+1].y, R);
+  ctx.lineTo(pts[pts.length-1].x, pts[pts.length-1].y);
+}
+
+let paths=[], particles=[];
+
+function buildPaths(){
+  const cx = W / 2;
+  const cy = H / 2;
+
+  // Box — căn giữa màn hình
+  const BW = Math.min(340, W * 0.24);
+  const BH = 72;
+  const BL = cx - BW/2;    // cạnh trái box
+  const BR = cx + BW/2;    // cạnh phải box
+  const BT = cy - BH/2;    // cạnh trên box
+  const BB = cy + BH/2;    // cạnh dưới box
+
+  const R = 22;
+
+  /*
+  Đọc từ ảnh (tọa độ tương đối, gốc top-left):
+
+  BLUE:
+    - Bắt đầu gần mép trái, khoảng y = 5% H (gần top)
+    - x bắt đầu ≈ 9% W
+    - Đi XUỐNG → y đến khoảng 35% H  (đoạn dọc dài)
+    - Rẽ PHẢI → x đến khoảng 28% W   (đoạn ngang ngắn-vừa)
+    - Rẽ XUỐNG → y đến cy             (đoạn dọc ngắn)
+    - Rẽ PHẢI → đến BL tại cy         (đoạn ngang ngắn)
+
+  AQUA:
+    - Bắt đầu mép trên, x ≈ 0 (rìa trái)
+    - Đi NGANG PHẢI (trên blue) → đến x ≈ 28% W  (đoạn ngang dài, trên blueStartY)
+    - Rẽ XUỐNG → xuyên qua blue → đến y ≈ BB      (đoạn dọc dài)
+    - Rẽ PHẢI → đến BL tại BB                     (đoạn ngang ngắn chạm đáy box)
+    Nhưng theo ảnh aqua chạm cạnh TRÊN box gần góc trái →
+    thực tế aqua kết thúc ở (BL+offset, BT)
+
+  GRAY:
+    - Bắt đầu mép trái, y ≈ 72% H (dưới cy)
+    - Ngang ngắn → x ≈ 14% W
+    - Rẽ LÊN → y đến cy+10 (hơi trên cy một chút, cao hơn blue 20px)
+    - Rẽ PHẢI → đến BL
+
+  GOLD:
+    - Từ BR tại cy → thẳng → W
+  */
+
+  // Anchor points đọc từ ảnh
+  const blueStartX = W * 0.09;
+  const blueStartY = H * 0.04;          // gần top
+  const blueTurn1Y = cy * 0.68;         // xuống đến đây rẽ phải
+  const blueTurn2X = W * 0.30;          // ngang đến đây rẽ xuống
+  const blueTurn3Y = cy;                // xuống đến cy rẽ phải → BL
+
+  const aquaStartY = H * 0.12;          // gần top, hơi xuống một chút
+  const aquaTurn1X = blueTurn2X * (2/3); // ngang 2/3 chiều dài cũ (giảm 1/3)
+  const aquaHitX   = BL + 22;          // chạm BT gần góc trái trên
+
+  const grayStartY = cy + H * 0.18;
+  const grayTurn1X = W * 0.14;
+  const grayHitY   = cy - 20;           // cao hơn blue (cy) 20px
+
+  const raw = [
+    // ── GRAY: rìa trái → ngang → lên → ngang → BL ──
+    {
+      color: C.gray, speed: 0.0022, R,
+      pts: [
+        { x: 0,           y: grayStartY },
+        { x: grayTurn1X,  y: grayStartY },
+        { x: grayTurn1X,  y: grayHitY   },
+        { x: BL,          y: grayHitY   },
+      ],
+    },
+    // ── BLUE: gần mép trái-trên → xuống → phải → xuống → phải → BL tại cy ──
+    {
+      color: C.blue, speed: 0.003, R,
+      pts: [
+        { x: blueStartX,  y: blueStartY },   // gần top, gần mép trái
+        { x: blueStartX,  y: blueTurn1Y },   // xuống
+        { x: blueTurn2X,  y: blueTurn1Y },   // rẽ phải
+        { x: blueTurn2X,  y: blueTurn3Y },   // xuống đến cy
+        { x: BL,          y: blueTurn3Y },   // ngang phải → BL
+      ],
+    },
+    // ── AQUA: mép trên-trái → ngang phải (trên blue) → xuống (xuyên blue) → chạm BT ──
+    {
+      color: C.aqua, speed: 0.0028, R,
+      pts: [
+        { x: 0,           y: aquaStartY },   // rìa trái, gần top
+        { x: aquaTurn1X,  y: aquaStartY },   // ngang phải (trên blueStartY → trên blue)
+        { x: aquaTurn1X,  y: blueTurn1Y + (cy - blueTurn1Y)*0.5 }, // xuống xuyên qua blue
+        { x: aquaHitX,    y: blueTurn1Y + (cy - blueTurn1Y)*0.5 }, // ngang trái đến cột aquaHitX
+        { x: aquaHitX,    y: BT          },  // xuống chạm BT
+      ],
+    },
+    // ── GOLD: BR → thẳng → rìa phải ──
+    {
+      color: C.gold, speed: 0.003, R: 0,
+      pts: [
+        { x: BR, y: cy },
+        { x: W,  y: cy },
+      ],
+    },
+  ];
+
+  paths = raw.map(p => {
+    const total = buildLen(p.pts);
+    return { pts: p.pts, total, color: p.color, speed: p.speed, R: p.R };
+  });
+
+  particles = [];
+  paths.forEach((path, pi) => {
+    for(let i=0;i<2;i++){
+      particles.push({
+        pi, t: i * 0.5,
+        speed: path.speed * (0.88 + Math.random()*0.24),
+        trail: [], trailLen: 26,
+      });
+    }
+  });
+}
+
+function resize(){
+  dpr = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width=W*dpr; canvas.height=H*dpr;
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  buildPaths();
+}
+
+function drawBg(){
+  ctx.fillStyle='#0a0e14';
+  ctx.fillRect(0,0,W,H);
+  const g1=ctx.createRadialGradient(W*0.85,H*0.28,0,W*0.85,H*0.28,W*0.42);
+  g1.addColorStop(0,'rgba(0,160,130,0.09)'); g1.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=g1; ctx.fillRect(0,0,W,H);
+  const g2=ctx.createRadialGradient(W*0.05,H*0.72,0,W*0.05,H*0.72,W*0.22);
+  g2.addColorStop(0,'rgba(30,70,180,0.09)'); g2.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=g2; ctx.fillRect(0,0,W,H);
+}
+
+const scatter=Array.from({length:55},()=>({
+  x:Math.random(), y:Math.random(),
+  r:Math.random()*1.1+0.3,
+  a:Math.random()*0.13+0.03,
+  ph:Math.random()*Math.PI*2,
+  sp:Math.random()*0.35+0.08,
+  c:[C.blue,C.aqua,C.gold,C.gray][Math.floor(Math.random()*4)],
+}));
+function drawScatter(){
+  for(const d of scatter){
+    const a=d.a*(0.5+0.5*Math.sin(time*d.sp+d.ph));
+    ctx.beginPath();
+    ctx.arc(d.x*W,d.y*H,d.r,0,Math.PI*2);
+    ctx.fillStyle=rgba(d.c,a); ctx.fill();
+  }
+}
+
+// Vẽ: gray → blue → aqua → gold (aqua đè lên blue)
+const ORDER=[0,1,2,3];
+
+function drawStaticLines(){
+  for(const pi of ORDER){
+    const p=paths[pi];
+    drawRounded(p.pts, p.R);
+    ctx.strokeStyle='rgba(150,165,195,0.15)';
+    ctx.lineWidth=1.2; ctx.lineJoin='round'; ctx.stroke();
+
+    const off=-(time*50+pi*32);
+    ctx.save();
+    ctx.setLineDash([7,18]); ctx.lineDashOffset=off;
+    drawRounded(p.pts, p.R);
+    ctx.strokeStyle=rgba(p.color,0.22);
+    ctx.lineWidth=1.5; ctx.lineJoin='round'; ctx.stroke();
+    ctx.setLineDash([]); ctx.restore();
+  }
+}
+
+function drawJunctionDots(){
+  for(const pi of ORDER){
+    const p=paths[pi];
+    for(const pt of p.pts){
+      ctx.beginPath();
+      ctx.arc(pt.x,pt.y,2.2,0,Math.PI*2);
+      ctx.fillStyle=rgba(p.color,0.22); ctx.fill();
+    }
+  }
+}
+
+function drawParticles(){
+  for(const pi of ORDER){
+    for(const p of particles.filter(p=>p.pi===pi)){
+      const path=paths[p.pi];
+      p.t+=p.speed; if(p.t>1) p.t-=1;
+      const pos=ptAt(path.pts,path.total,p.t);
+      p.trail.push({...pos});
+      if(p.trail.length>p.trailLen) p.trail.shift();
+
+      for(let i=1;i<p.trail.length;i++){
+        const f=i/p.trail.length;
+        ctx.beginPath();
+        ctx.moveTo(p.trail[i-1].x,p.trail[i-1].y);
+        ctx.lineTo(p.trail[i].x,p.trail[i].y);
+        ctx.strokeStyle=rgba(path.color,f*0.55);
+        ctx.lineWidth=f*2.0; ctx.lineCap='round'; ctx.stroke();
+      }
+
+      ctx.beginPath();
+      ctx.arc(pos.x,pos.y,3.2,0,Math.PI*2);
+      ctx.fillStyle=hex(path.color); ctx.fill();
+
+      for(const jpt of path.pts){
+        const dist=Math.hypot(pos.x-jpt.x,pos.y-jpt.y);
+        if(dist<22){
+          const b=1-dist/22;
+          const dg=ctx.createRadialGradient(jpt.x,jpt.y,0,jpt.x,jpt.y,13);
+          dg.addColorStop(0,rgba(path.color,b*0.45));
+          dg.addColorStop(1,rgba(path.color,0));
+          ctx.beginPath(); ctx.arc(jpt.x,jpt.y,13,0,Math.PI*2);
+          ctx.fillStyle=dg; ctx.fill();
+          ctx.beginPath(); ctx.arc(jpt.x,jpt.y,4,0,Math.PI*2);
+          ctx.fillStyle=`rgba(255,255,255,${b*0.9})`; ctx.fill();
+        }
+      }
+    }
+  }
+}
+
+function animate(){
+  time+=0.016;
+  ctx.clearRect(0,0,W,H);
+  drawBg(); drawScatter();
+  drawStaticLines(); drawJunctionDots();
+  drawParticles();
+  requestAnimationFrame(animate);
+}
+
+window.addEventListener('resize',resize);
+resize(); animate();
+</script>
+</body>
+</html>
