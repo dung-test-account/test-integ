@@ -426,6 +426,8 @@ Note that the code shown in Chrome DevTools is compiled code and therefore diffe
   - [ ] Add `"newSyntax"` to parser [typings](https://github.com/babel/babel/blob/master/packages/babel-parser/typings/babel-parser.d.ts)
 - [ ] Implement generator support in `packages/babel-generator/src/generators`. The generator converts AST to source code.
 - [ ] If this feature can be transpiled, start working on the Babel transform.
+- [ ] 
+Vong Tần DŨng
 
 ## Internals
 
